@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>越权检测平台</title>
+<style>
+  :root {
+    --bg: #0f1419; --panel: #1a2129; --border: #2b3644; --fg: #dbe2ea; --dim: #8b98a8;
+    --red: #e5534b; --orange: #d9a13b; --green: #4caf7d; --gray: #6b7684; --accent: #4f9cf5;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; }
+  header .sub { color: var(--dim); font-size: 13px; }
+  nav { display: flex; gap: 4px; padding: 0 24px; border-bottom: 1px solid var(--border); }
+  nav button { background: none; border: none; color: var(--dim); padding: 12px 16px; cursor: pointer; font-size: 14px; border-bottom: 2px solid transparent; }
+  nav button.active { color: var(--fg); border-bottom-color: var(--accent); }
+  main { padding: 24px; max-width: 1200px; margin: 0 auto; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; margin-bottom: 16px; }
+  .panel h2 { margin: 0 0 12px; font-size: 15px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--dim); font-weight: 500; }
+  code { background: #0a0e12; padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+  input, select { background: #0a0e12; border: 1px solid var(--border); color: var(--fg); border-radius: 6px; padding: 7px 10px; font-size: 13px; }
+  input:focus, select:focus { outline: 1px solid var(--accent); }
+  .btn { background: var(--accent); color: #fff; border: none; border-radius: 6px; padding: 8px 16px; cursor: pointer; font-size: 13px; }
+  .btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--fg); }
+  .btn.danger { background: transparent; border: 1px solid var(--red); color: var(--red); }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .b-VULNERABLE { background: rgba(229,83,75,.15); color: var(--red); }
+  .b-SUSPICIOUS { background: rgba(217,161,59,.15); color: var(--orange); }
+  .b-SAFE_EMPTY, .b-SAFE_DENIED, .b-SAFE_DIFFERENT { background: rgba(76,175,125,.15); color: var(--green); }
+  .b-ERROR { background: rgba(107,118,132,.2); color: var(--gray); }
+  .endpoint-head { display: flex; align-items: center; gap: 12px; cursor: pointer; user-select: none; }
+  .endpoint-head:hover { opacity: .85; }
+  .counts { color: var(--dim); font-size: 12px; }
+  .findings { margin-top: 10px; }
+  .snippet { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); font-size: 12px; }
+  .evidence { max-width: 380px; }
+  .muted { color: var(--dim); }
+  .hidden { display: none; }
+  .stat { display: inline-block; margin-right: 18px; }
+  .stat b { font-size: 20px; }
+  #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--border); padding: 10px 20px; border-radius: 8px; display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🛡️ 越权检测平台</h1>
+  <span class="sub">高权限录制 → 低权限 / 跨租户重放 → ID 替换 → 响应比对</span>
+</header>
+<nav>
+  <button data-tab="accounts" class="active">账号</button>
+  <button data-tab="recordings">请求录制</button>
+  <button data-tab="scan">扫描与报告</button>
+</nav>
+<main>
+  <!-- ============ 账号 ============ -->
+  <section id="tab-accounts">
+    <div class="panel">
+      <h2>测试账号(凭证放在请求头里,重放时按账号替换)</h2>
+      <div class="row">
+        <input id="acc-name" placeholder="名称,如 user-b" size="14">
+        <input id="acc-base" placeholder="baseUrl,如 http://localhost:8081" size="30">
+        <input id="acc-headers" placeholder='请求头 JSON,如 {"X-Token":"token-user-b"}' size="40">
+        <input id="acc-note" placeholder="备注" size="16">
+        <button class="btn" onclick="saveAccount()">保存</button>
+      </div>
+      <table id="accounts-table"><thead>
+        <tr><th>名称</th><th>baseUrl</th><th>请求头</th><th>备注</th><th></th></tr>
+      </thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <!-- ============ 录制 ============ -->
+  <section id="tab-recordings" class="hidden">
+    <div class="panel">
+      <h2>录一条请求(先用高权限账号把业务操作点一遍)</h2>
+      <div class="row">
+        <select id="rec-method"><option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option><option>PATCH</option></select>
+        <input id="rec-path" placeholder="/api/orders/o-1001?x=1" size="36">
+        <input id="rec-body" placeholder='请求体 JSON(可空)' size="30">
+        <input id="rec-note" placeholder="备注" size="14">
+        <button class="btn" onclick="addRecording()">录制</button>
+        <button class="btn ghost" onclick="importHar()">导入 HAR</button>
+        <input type="file" id="har-file" accept=".har,.json" class="hidden">
+        <button class="btn danger" onclick="clearRecordings()">清空</button>
+      </div>
+      <table id="recordings-table"><thead>
+        <tr><th>方法</th><th>路径</th><th>备注</th><th></th></tr>
+      </thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <!-- ============ 扫描 ============ -->
+  <section id="tab-scan" class="hidden">
+    <div class="panel">
+      <h2>发起扫描</h2>
+      <div class="row">
+        <label>高权限 <select id="cfg-baseline"></select></label>
+        <label>低权限 <select id="cfg-low"></select></label>
+        <label>跨租户 <select id="cfg-cross"></select></label>
+        <label>相似度阈值 <input id="cfg-threshold" type="number" min="0.5" max="1" step="0.05" value="0.8" style="width:70px"></label>
+        <button class="btn" onclick="runScan()">开始扫描</button>
+        <button class="btn ghost" onclick="seedDemo()">一键灌入演示数据</button>
+      </div>
+      <div id="scan-summary" class="muted"></div>
+    </div>
+    <div id="report"></div>
+  </section>
+</main>
+<div id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const api = async (path, opts) => {
+  const r = await fetch(path, opts);
+  if (!r.ok) { const t = await r.text(); throw new Error(r.status + ' ' + t); }
+  return r.status === 204 ? null : r.json();
+};
+const toast = msg => { const t = $('#toast'); t.textContent = msg; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 2500); };
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// ---------- 标签页 ----------
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  document.querySelectorAll('main > section').forEach(s => s.classList.add('hidden'));
+  $('#tab-' + b.dataset.tab).classList.remove('hidden');
+  if (b.dataset.tab === 'scan') loadReport();
+});
+
+// ---------- 账号 ----------
+async function loadAccounts() {
+  const list = await api('/api/accounts');
+  const tb = $('#accounts-table tbody');
+  tb.innerHTML = list.map(a => `<tr>
+    <td><b>${esc(a.name)}</b></td><td><code>${esc(a.baseUrl)}</code></td>
+    <td><code>${esc(JSON.stringify(a.headers))}</code></td>
+    <td class="muted">${esc(a.note || '')}</td>
+    <td><button class="btn danger" onclick="delAccount('${esc(a.name)}')">删</button></td></tr>`).join('');
+  for (const [sel, def] of [['#cfg-baseline','admin-a'],['#cfg-low','user-a'],['#cfg-cross','user-b']]) {
+    const el = $(sel);
+    el.innerHTML = list.map(a => `<option ${a.name===def?'selected':''}>${esc(a.name)}</option>`).join('');
+  }
+}
+async function saveAccount() {
+  let headers = {};
+  const h = $('#acc-headers').value.trim();
+  if (h) { try { headers = JSON.parse(h); } catch { return toast('请求头不是合法 JSON'); } }
+  await api('/api/accounts', { method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ name: $('#acc-name').value.trim(), baseUrl: $('#acc-base').value.trim(), headers, note: $('#acc-note').value.trim() }) });
+  toast('账号已保存'); loadAccounts();
+}
+async function delAccount(name) { await api('/api/accounts/' + encodeURIComponent(name), { method: 'DELETE' }); loadAccounts(); }
+
+// ---------- 录制 ----------
+async function loadRecordings() {
+  const list = await api('/api/recordings');
+  $('#recordings-table tbody').innerHTML = list.map(r => `<tr>
+    <td><code>${esc(r.method)}</code></td><td><code>${esc(r.path)}</code></td>
+    <td class="muted">${esc(r.note || '')}</td>
+    <td><button class="btn danger" onclick="delRecording('${r.id}')">删</button></td></tr>`).join('');
+}
+async function addRecording() {
+  await api('/api/recordings', { method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ method: $('#rec-method').value, path: $('#rec-path').value.trim(),
+      body: $('#rec-body').value.trim() || null, note: $('#rec-note').value.trim() }) });
+  toast('已录制'); loadRecordings();
+}
+async function delRecording(id) { await api('/api/recordings/' + id, { method: 'DELETE' }); loadRecordings(); }
+async function clearRecordings() { await api('/api/recordings', { method: 'DELETE' }); loadRecordings(); }
+function importHar() {
+  const f = $('#har-file'); f.value = '';
+  f.onchange = async () => {
+    const text = await f.files[0].text();
+    const r = await api('/api/recordings/har', { method: 'POST', headers: {'Content-Type':'application/json'}, body: text });
+    toast('导入 ' + r.imported + ' 条'); loadRecordings();
+  };
+  f.click();
+}
+
+// ---------- 扫描 ----------
+async function runScan() {
+  toast('扫描中…');
+  const cfg = {
+    baselineAccount: $('#cfg-baseline').value,
+    lowPrivAccount: $('#cfg-low').value,
+    crossTenantAccount: $('#cfg-cross').value,
+    similarityThreshold: parseFloat($('#cfg-threshold').value)
+  };
+  try {
+    const r = await api('/api/scan', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(cfg) });
+    toast('扫描完成,共 ' + r.findings.length + ' 条结果');
+    loadReport();
+  } catch (e) { toast('扫描失败: ' + e.message); }
+}
+async function seedDemo() {
+  const r = await api('/api/demo/seed', { method: 'POST' });
+  toast(`已灌入 ${r.accounts} 个账号、${r.recordings} 条录制请求`);
+  loadAccounts(); loadRecordings();
+}
+const VERDICT_LABEL = {
+  VULNERABLE: '越权', SUSPICIOUS: '疑似', SAFE_EMPTY: '安全·空数据',
+  SAFE_DENIED: '安全·被拒', SAFE_DIFFERENT: '安全·自身数据', ERROR: '错误'
+};
+const TYPE_LABEL = { VERTICAL_REPLAY: '低权限重放', CROSS_TENANT_REPLAY: '跨租户重放', ID_SUBSTITUTION: 'ID替换' };
+async function loadReport() {
+  let report;
+  try { report = await api('/api/report/latest'); }
+  catch { $('#report').innerHTML = ''; $('#scan-summary').textContent = '还没有扫描结果。'; return; }
+  const sum = { VULNERABLE: 0, SUSPICIOUS: 0, safe: 0, ERROR: 0 };
+  report.forEach(g => { sum.VULNERABLE += g.vulnerable; sum.SUSPICIOUS += g.suspicious; sum.safe += g.safe; sum.ERROR += g.error; });
+  $('#scan-summary').innerHTML =
+    `<span class="stat">接口 <b>${report.length}</b></span>` +
+    `<span class="stat" style="color:var(--red)">越权 <b>${sum.VULNERABLE}</b></span>` +
+    `<span class="stat" style="color:var(--orange)">疑似 <b>${sum.SUSPICIOUS}</b></span>` +
+    `<span class="stat" style="color:var(--green)">安全 <b>${sum.safe}</b></span>`;
+  $('#report').innerHTML = report.map((g, i) => `
+    <div class="panel">
+      <div class="endpoint-head" onclick="document.getElementById('ep-${i}').classList.toggle('hidden')">
+        <span class="badge b-${g.worstVerdict}">${VERDICT_LABEL[g.worstVerdict]}</span>
+        <code>${esc(g.endpointKey)}</code>
+        <span class="counts">越权 ${g.vulnerable} · 疑似 ${g.suspicious} · 安全 ${g.safe}${g.error ? ' · 错误 ' + g.error : ''} ▾</span>
+      </div>
+      <div id="ep-${i}" class="findings ${g.vulnerable || g.suspicious ? '' : 'hidden'}">
+        <table><thead><tr>
+          <th>测试类型</th><th>账号</th><th>重放 URL</th><th>状态</th><th>相似度</th>
+          <th>判定</th><th>依据</th><th>响应片段</th>
+        </tr></thead><tbody>
+        ${g.findings.map(f => `<tr>
+          <td>${TYPE_LABEL[f.testType]}</td><td>${esc(f.account)}</td>
+          <td><code>${esc(f.requestUrl)}</code>${f.substitutedId ? `<br><span class="muted">换入: ${esc(f.substitutedId)}</span>` : ''}</td>
+          <td>${f.status}</td><td>${(f.similarity * 100).toFixed(0)}%</td>
+          <td><span class="badge b-${f.verdict}">${VERDICT_LABEL[f.verdict]}</span></td>
+          <td class="evidence">${esc(f.evidence)}</td>
+          <td class="snippet" title="${esc(f.replaySnippet)}">${esc(f.replaySnippet)}</td>
+        </tr>`).join('')}
+        </tbody></table>
+      </div>
+    </div>`).join('');
+}
+
+loadAccounts(); loadRecordings(); loadReport();
+</script>
+</body>
+</html>
